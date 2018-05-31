@@ -1,0 +1,196 @@
+#!/usr/bin/env python
+# encoding: utf-8
+"""
+DBNBeatTracker beat tracking algorithm.
+
+"""
+
+from __future__ import absolute_import, division, print_function
+
+import argparse
+
+import librosa
+from FoxDot.lib import *
+import FoxDot
+import numpy as np
+import queue
+
+from madmom.processors import Processor, IOProcessor, io_arguments
+from madmom.audio.signal import SignalProcessor
+from madmom.features import ActivationsProcessor
+from madmom.features.beats import RNNBeatProcessor, DBNBeatTrackingProcessor
+from madmom.ml.nn import NeuralNetworkEnsemble
+
+beat_q = queue.Queue(8)
+Clock.latency = 0.01
+class BeepProcessor(Processor):
+    """
+    Play a beep.
+
+    Parameters
+    ----------
+    duration : float
+        Duration of the beep [seconds].
+    sample_rate : int
+        Sample rate of the signal [Hz].
+    frame_size : int
+        Frame size [samples].
+
+    """
+
+    def __init__(self, duration=0.02, sample_rate=44100, frame_size=1024,
+                 **kwargs):
+        import pyaudio
+        print('prepare recording')
+        self.pa = pyaudio.PyAudio()
+        self.stream = self.pa.open(rate=sample_rate, channels=1,
+                                   format=pyaudio.paInt16, output=True,
+                                   frames_per_buffer=frame_size)
+        self.global_counter = 0
+        print('start recording')
+
+        # generate beep
+        #num_samples = int(round(0.02 * sample_rate))
+        #amplitude = 2 ** 14
+
+        beepsnd,_ = librosa.load('block.wav',sr=None)
+        print(type(beepsnd))
+        # beeps needs to be longer (otherwise it doesn't play)
+        #out = np.zeros(num_samples)
+        out1 = (beepsnd * np.power(2,14)).astype(np.int16).tostring()
+        self.beepsnd = out1
+
+    def process(self, data, **kwargs):
+        """Play beep."""
+        #print(data)
+        if data:
+            print(data)
+            beat_q.put(data[0])
+            self.global_counter += 1
+            if beat_q.full():
+                print(list(beat_q.queue))
+                bpm_now = np.diff(list(beat_q.queue)).mean()
+                print(int(60 / bpm_now))
+                #Clock.bpm =  int(60 / bpm_now)
+                print(Clock.bpm)
+                if np.abs(Clock.bpm - int(60 / bpm_now)) > 4:    
+                    Clock.bpm =  int(60 / bpm_now)
+                if np.abs(Clock.now() - np.floor(Clock.now()) - 0.5)< 0.4 and self.global_counter == 8:
+                    Clock.set_time(np.round(Clock.now()))
+                beat_q.get()
+                print(Clock.now())
+            if self.global_counter == 8:
+                self.global_counter = 0
+            #p1 >> play("")
+            p1 >> play("x",dur=1)
+            self.stream.write(self.beepsnd)
+        return data
+
+    def stop(self):
+        self.stream.stop_stream()
+        self.stream.close()
+        self.pa.terminate()
+
+
+def main():
+    """DBNBeatTracker"""
+
+    # define parser
+    p = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter, description='''
+    The DBNBeatTracker program detects all beats in an audio file according to
+    the method described in:
+
+    "A Multi-Model Approach to Beat Tracking Considering Heterogeneous Music
+     Styles"
+    Sebastian Böck, Florian Krebs and Gerhard Widmer.
+    Proceedings of the 15th International Society for Music Information
+    Retrieval Conference (ISMIR), 2014.
+
+    It does not use the multi-model (Section 2.2.) and selection stage (Section
+    2.3), i.e. this version corresponds to the pure DBN version of the
+    algorithm for which results are given in Table 2.
+
+    Instead of the originally proposed state space and transition model for the
+    DBN, the following is used:
+
+    "An Efficient State Space Model for Joint Tempo and Meter Tracking"
+    Florian Krebs, Sebastian Böck and Gerhard Widmer.
+    Proceedings of the 16th International Society for Music Information
+    Retrieval Conference (ISMIR), 2015.
+
+    This program can be run in 'single' file mode to process a single audio
+    file and write the detected beats to STDOUT or the given output file.
+
+      $ DBNBeatTracker single INFILE [-o OUTFILE]
+
+    If multiple audio files should be processed, the program can also be run
+    in 'batch' mode to save the detected beats to files with the given suffix.
+
+      $ DBNBeatTracker batch [-o OUTPUT_DIR] [-s OUTPUT_SUFFIX] FILES
+
+    If no output directory is given, the program writes the files with the
+    detected beats to the same location as the audio files.
+
+    The 'pickle' mode can be used to store the used parameters to be able to
+    exactly reproduce experiments.
+
+    ''')
+    # version
+    p.add_argument('--version', action='version',
+                   version='DBNBeatTracker.2016')
+    p.add_argument('--sonify', action='store_true', default=False,
+                   help='also sonify the beat positions')
+    # input/output options
+    io_arguments(p, output_suffix='.beats.txt', online=True)
+    ActivationsProcessor.add_arguments(p)
+    # signal processing arguments
+    SignalProcessor.add_arguments(p, norm=False, gain=0)
+    # peak picking arguments
+    DBNBeatTrackingProcessor.add_arguments(p)
+    NeuralNetworkEnsemble.add_arguments(p, nn_files=None)
+
+    # parse arguments
+    args = p.parse_args()
+
+    #print(args)
+
+    # set immutable arguments
+    args.fps = 100
+
+    # print arguments
+    if args.verbose:
+        print(args)
+
+    # input processor
+    if args.load:
+        # load the activations from file
+        in_processor = ActivationsProcessor(mode='r', **vars(args))
+    else:
+        # use a RNN to predict the beats
+        in_processor = RNNBeatProcessor(**vars(args))
+
+    # output processor
+    if args.save:
+        # save the RNN beat activations to file
+        out_processor = ActivationsProcessor(mode='w', **vars(args))
+    else:
+        # track the beats with a DBN
+        beat_processor = DBNBeatTrackingProcessor(**vars(args))
+        # output handler
+        from madmom.utils import write_events as writer
+        # sequentially process everything
+        out_processor = [beat_processor, writer]
+        # also sonify the beats
+        if args.sonify:
+            out_processor.insert(1, BeepProcessor())
+
+    # create an IOProcessor
+    processor = IOProcessor(in_processor, out_processor)
+
+    # and call the processing function
+    args.func(processor, **vars(args))
+
+
+if __name__ == '__main__':
+    main()
