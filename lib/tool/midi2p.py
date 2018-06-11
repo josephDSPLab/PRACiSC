@@ -141,11 +141,14 @@ def grouping(notes, tol):
     current_start_time = 0
 
     current_group = group_note(start_time=current_start_time)
+    group_collection = []
+    if not notes:
+        return 
     # Adding leading rest!
     if notes[0].start_time - 0 > tol:
         current_group.addnote(single_note(1, 1, duration=-notes[0].start_time,release_time=notes[0].start_time))
 
-    group_collection = []
+    
     for n in notes:
         if np.abs(n.start_time - current_start_time) > tol:
             current_start_time = n.start_time
@@ -168,6 +171,8 @@ def midi2P(path, track_num=None, verb=0):
             track_num = np.arange(1)
         else:
             track_num = np.arange(len(mid.tracks) - 1) + 1
+    if track_num == 'all':
+        track_num = np.arange(len(mid.tracks))
 
     tracks_Patterns = []
 
@@ -179,7 +184,9 @@ def midi2P(path, track_num=None, verb=0):
         Is_first = True
         for msg in track:
             if msg.type == 'note_on':
+                #print(msg)
                 # accumulate the delta time first
+                note_key = str(msg.note)
                 if Is_first == False:
                     time += float(msg.time) / mid.ticks_per_beat
                 else:
@@ -188,21 +195,35 @@ def midi2P(path, track_num=None, verb=0):
                         time += (msg.time / mid.ticks_per_beat) % 16
 
                 if msg.velocity == 0:
-                    if current_note[msg.note][0]:
-                        current_note[msg.note][1].release_time = time - \
-                            current_note[msg.note][1].start_time
-                        current_note[msg.note][1].duration = np.ceil(
-                            current_note[msg.note][1].release_time)
-                        current_note[msg.note][0] = False
-                        note_collection.append(current_note[msg.note][1])
+                    if current_note[note_key][0]:
+                        current_note[note_key][1].release_time = time - \
+                            current_note[note_key][1].start_time
+                        current_note[note_key][1].duration = np.ceil(
+                            current_note[note_key][1].release_time)
+                        current_note[note_key][0] = False
+                        note_collection.append(current_note[note_key][1])
                 # Currently, only consider the note a trigger
                 else:
-                    if msg.note in current_note:
-                        n_gap = time - current_note[msg.note][1].start_time
-                        if n_gap < current_note[msg.note][1].duration:
-                            current_note[msg.note][1].duration = n_gap
-                    current_note[msg.note] = [
+                    if note_key in current_note:
+                        n_gap = time - current_note[note_key][1].start_time
+                        if n_gap < current_note[note_key][1].duration:
+                            current_note[note_key][1].duration = n_gap
+                        if current_note[note_key][0]:
+                            current_note[note_key][1].duration = n_gap
+                            current_note[note_key][1].release_time = n_gap
+                            current_note[note_key][0] = False
+                            note_collection.append(current_note[note_key][1])
+                    current_note[note_key]=[
                         True, single_note(msg.note, time, msg.velocity)]
+                # checking all turned-on note, now we should force all of them to be turn off
+        for key,n in current_note.items():
+            if n[0]:
+                n[1].duration = 16 - \
+                    n[1].start_time
+                n[1].release_time = 16 - \
+                    n[1].start_time
+                n[0] = False
+                note_collection.append(n[1])
         note_collection = sortbytime(note_collection)
         if verb > 1:
             for i, note in enumerate(note_collection):
@@ -210,6 +231,8 @@ def midi2P(path, track_num=None, verb=0):
                     i, note.note, note.start_time, note.release_time, note.duration))
         groups = grouping(note_collection, 1 / 8)
         if verb > 0:
+            if not groups:
+                break
             for i, g in enumerate(groups):
                 print('--------------------------------------')
                 print('# %2d Group:\n' % i)
@@ -226,4 +249,4 @@ def midi2P(path, track_num=None, verb=0):
 
 
 if __name__ == '__main__':
-    tracks_Patterns = midi2P('test_midi_folder\\Bass_1.mid', [0], verb=2)
+    tracks_Patterns = midi2P('test_midi_folder\\Bass_1.mid','all', verb=2)
