@@ -1,0 +1,10 @@
+Chord_1.mid 1
+Chord_2.mid 2
+Theme_1.mid 3
+Theme_2.mid 4
+Bass_1.mid 5
+Kick_1.mid 6
+Cymbal_1.mid 7
+Cymbal_2.mid 8
+Snare_1.mid 9
+Snare_2.mid 10

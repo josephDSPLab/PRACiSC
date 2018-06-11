@@ -23,22 +23,23 @@ attribute:
               this value should be determined by the neighboring group
 ------
 '''
-
+import FoxDot.lib                                                                                                                                                                
 import mido
 import numpy as np
+
 import collections
 
 
 def midinote2degree(m_note):
-    (m_note - 63) // 12 * 7 
+    (m_note - 60) // 12 * 7
     scale = {0: 0, 1: 0.5, 2: 1, 3: 1.5, 4: 2, 5: 3,
              6: 3.5, 7: 4, 8: 4.5, 9: 5, 10: 5.5, 11: 6}
-    return (m_note - 63) // 12 * 7 + scale[int((m_note - 63)%12)]
+    return (m_note - 60) // 12 * 7 + scale[int((m_note - 60) % 12)]
 
 
 class single_note:
 
-    def __init__(self, note, start_time, velocity, release_time=0, duration=0):
+    def __init__(self, note, start_time, velocity=63, release_time=0, duration=0):
         self.note = note
         self.start_time = start_time
         self.release_time = release_time
@@ -58,14 +59,14 @@ class group_note:
     def addnote(self, note):
         self.group_note.append(note.note)
         self.release_time.append(note.release_time)
-        self.duration = np.maximum(self.duration, note.duration)
+        self.duration = np.maximum(self.duration, note.duration) if note.duration > 0 else note.duration
         self.velocity.append(note.velocity)
 
     def __str__(self):
         '''
         Format output
         '''
-        float_format = '{:2.2f}, '
+        float_format = '{:4.4f}, '
         int_format = '{:2d}, '
         output_str = ''
         output_str += 'Playing Notes:\n'
@@ -87,8 +88,8 @@ class group_note:
         '''
         return a dictionary which is compatible to FoxDot
         '''
-        P = {'degree': tuple([midinote2degree(n) for n in self.group_note]), 'dur': self.duration,
-             'sus': tuple(self.release_time), 'vel': tuple(self.velocity)}
+        P = {'degree': tuple([midinote2degree(n) for n in self.group_note]), 'dur': self.duration if self.duration > 0 else FoxDot.lib.rest(-self.duration),
+             'sus': tuple(self.release_time), 'amp': tuple([(v+1.)/128 for v in self.velocity])}
         return P
 
 
@@ -114,7 +115,8 @@ class loop_note_seq:
                 pre_start = g.start_time
                 self.serial_groups.append(g)
             else:
-                self.serial_groups[-1].duration = g.start_time - pre_start
+                if self.serial_groups[-1].duration > 0:
+                    self.serial_groups[-1].duration = g.start_time - pre_start
                 pre_start = g.start_time
                 self.serial_groups.append(g)
         self.serial_groups[-1].duration = 16 - pre_start
@@ -123,7 +125,7 @@ class loop_note_seq:
         '''
         return a iterable list which contains pattern-like parameters
         '''
-        P_serial = {'degree': [], 'dur': [], 'sus': [], 'vel': []}
+        P_serial = {'degree': [], 'dur': [], 'sus': [], 'amp': []}
         for s_g in [g.group2p() for g in self.serial_groups]:
             for key, value in P_serial.items():
                 P_serial[key].append(s_g[key])
@@ -137,7 +139,12 @@ def sortbytime(notes):
 
 def grouping(notes, tol):
     current_start_time = 0
+
     current_group = group_note(start_time=current_start_time)
+    # Adding leading rest!
+    if notes[0].start_time - 0 > tol:
+        current_group.addnote(single_note(1, 1, duration=-notes[0].start_time,release_time=notes[0].start_time))
+
     group_collection = []
     for n in notes:
         if np.abs(n.start_time - current_start_time) > tol:
@@ -150,7 +157,7 @@ def grouping(notes, tol):
     return group_collection
 
 
-def midi2P(path, track_num=None,verb=0):
+def midi2P(path, track_num=None, verb=0):
     # midi file I/O
     mid = mido.MidiFile(path)
     #verb = 0
@@ -160,9 +167,9 @@ def midi2P(path, track_num=None,verb=0):
         if len(mid.tracks) == 1:
             track_num = np.arange(1)
         else:
-            track_num = np.arange(len(mid.tracks)-1)+1
+            track_num = np.arange(len(mid.tracks) - 1) + 1
 
-    tracks_Patterns=[]
+    tracks_Patterns = []
 
     # Only process the first track (the track of information is not counted)
     for i, track in enumerate([mid.tracks[t] for t in track_num]):
@@ -177,6 +184,8 @@ def midi2P(path, track_num=None,verb=0):
                     time += float(msg.time) / mid.ticks_per_beat
                 else:
                     Is_first = False
+                    if ((msg.time / mid.ticks_per_beat) % 16) > 0.16:
+                        time += (msg.time / mid.ticks_per_beat) % 16
 
                 if msg.velocity == 0:
                     if current_note[msg.note][0]:
@@ -217,4 +226,4 @@ def midi2P(path, track_num=None,verb=0):
 
 
 if __name__ == '__main__':
-    tracks_Patterns = midi2P('Snare_6.mid')
+    tracks_Patterns = midi2P('test_midi_folder\\Bass_1.mid', [0], verb=2)

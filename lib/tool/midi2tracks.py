@@ -7,8 +7,12 @@ Require enviroment:
     and the proper mapping to the sound source in other software, e.g., Ableton.
 '''
 import os
-from midi2p import midi2P
+
 import FoxDot.lib
+if __name__ == '__main__':
+    from midi2p import midi2P
+else:
+    from .midi2p import midi2P
 
 
 class TrackSet:
@@ -43,13 +47,15 @@ class TrackSet:
         return [FoxDot.lib.MidiOut(**p) for p in tracks_set]
 
     def wrapping(self, config_path):
+        print("Midi Port wrapping:\n")
         if self.tracks_name:
             with open(config_path) as f:
                 for line in f:
                     name, port = line.split(' ')[0], line.split(' ')[1]
                     if name in self.tracks_name or name[:-4] in self.tracks_name:
                         idx = self.tracks_name.index(name)
-                        self.tracks_set[idx]['MidiNum'] = port
+                        self.tracks_set[idx][0]['MidiNum'] = int(port) -1 
+                        print(name,int(port))
         return
 
 
