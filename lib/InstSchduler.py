@@ -178,7 +178,7 @@ class InstScheduler():
 if __name__ == '__main__':
     
     test = InstScheduler(FoxDot.lib.Clock)
-    test.AddMidiFolder('tool\\test_midi_folder')
+    test.AddMidiFolder('tool\\Midinote-Test2')
     print(test)
     test.Odered_event()
     test.StartInTime(2, 140)
