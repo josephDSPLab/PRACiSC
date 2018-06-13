@@ -59,7 +59,10 @@ class InstScheduler():
         self.playing_flag[Inst_name] = True
 
     def fclock_now(self):
-        return self.fclock.now() / 16
+        if self.period:
+            return self.fclock.now() / 16 % self.period
+        else:
+            return self.fclock.now() / 16
 
     def AddMidi(self, Inst_name, port_num):
         Patterns = midi2P(file_path, None, verb=0)
@@ -72,6 +75,9 @@ class InstScheduler():
         test.wrapping(wrap_path)
         for n, p in zip(test.tracks_name, test.tracks_set):
             self.AddInst(n, FoxDot.lib.MidiOut, **p[0])
+
+    def ChordOverride(self, chord_pattern):
+        return
 
     def change_parameters(self, Inst_name, **kwargs):
         for key, value in kwargs.items():
@@ -107,6 +113,9 @@ class InstScheduler():
                 self.change_parameters(**arg)
             elif e == 'Gen_Live':
                 self.live_generator(**arg)
+            elif e == 'Loop_End':
+                print('Loop_end')
+                self.pipeline.sent_request()
             else:
                 print('Event type Wrong!')
 
@@ -136,9 +145,10 @@ class InstScheduler():
             inst_play = [key for key,
                          value in self.playing_flag.items() if not value]
             method = ['Play'] * int(delt_pros)
-            new_evet = np.random.choice(inst_play, int(delt_pros),replace=False)
+            new_evet = np.random.choice(
+                inst_play, int(delt_pros), replace=False)
             args = [{'Inst_name': n} for n in new_evet]
-            print(method[0],args)
+            print(method[0], args)
             self.pipeline.InsertEvent(
                 method, args, event_time, vol=True)
             return
@@ -146,9 +156,10 @@ class InstScheduler():
             inst_play = [key for key,
                          value in self.playing_flag.items() if value]
             method = ['Stop'] * int(-delt_pros)
-            new_evet = np.random.choice(inst_play, int(-delt_pros),replace=False)
+            new_evet = np.random.choice(
+                inst_play, int(-delt_pros), replace=False)
             args = [{'Inst_name': n} for n in new_evet]
-            print(['Stop'],args)
+            print(['Stop'], args)
             self.pipeline.InsertEvent(
                 method, args, event_time, vol=True)
             return
@@ -160,7 +171,7 @@ class InstScheduler():
         '''
         self.pipeline.event_clear()
         self.need_prepare = 1
-        num_level = min(10,len(self.Inst_dict))
+        num_level = min(10, len(self.Inst_dict))
         num_point = 5
         min_pos = 0.2
         max_pos = 1
@@ -193,6 +204,8 @@ class InstScheduler():
                 self.pipeline.PushEvent(
                     ["Gen_Live"], [{'prev_pros': prev_pros, 'pros': p, 'event_time': b}], b - 1)
             prev_pros = p
+        self.pipeline.PushEvent(
+            ["Loop_End"], [{'is_loop': True}], self.period - 1)
 
     def CheckingAsyLoop(self, beat_bar=4, bar_loop=4):
         '''
@@ -201,7 +214,7 @@ class InstScheduler():
         #self.play_bpm = self.fclock.bpm = play_bpm
         self.fclock.set_time(0.1)
         cont = self.pipeline.sent_request()
-        self.fclock.set_time(-0.5)
+        self.fclock.set_time(-0.1)
 
         self.start_time = time.time()
         loop_dur = beat_bar * bar_loop * (60. / self.fclock.bpm)
@@ -236,10 +249,6 @@ class InstScheduler():
         loop_thread.daemon = True
         loop_thread.start()
 
-        loop_thread_test = threading.Timer(
-            delay_time, lambda: print(self.fclock_now()), ())
-        loop_thread_test.daemon = True
-        loop_thread_test.start()
         return
 
 
@@ -253,19 +262,24 @@ if __name__ == '__main__':
     test.StartInTime(2, 160)
     '''
 
-    #'''
+    '''
     test2 = InstScheduler(FoxDot.lib.Clock)
     test2.AddMidiFolder(folder_path)
     test2.Random_event(2)
     test2.StartInTime(2, 160)
-    #'''
-
     '''
+
+    # '''
     test3 = InstScheduler(FoxDot.lib.Clock)
     test3.AddMidiFolder(folder_path)
     test3.Live_event()
+    c_time = time.time()
+    loop_acc_test = threading.Timer(2, lambda: print(time.time() - c_time), ())
+    loop_acc_test.daemon = True
+    loop_acc_test.start()
     test3.StartInTime(2, 160)
-    '''
+
+    # '''
 
     while(1):
         print('outside loop')
