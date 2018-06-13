@@ -46,8 +46,9 @@ class TrackSet:
         '''
         return [FoxDot.lib.MidiOut(**p) for p in tracks_set]
 
-    def wrapping(self, config_path):
-        print("Midi Port wrapping:\n")
+    def wrapping(self, config_path, verb = 0):
+        if verb:
+            print("Midi Port wrapping:\n")
         if self.tracks_name:
             with open(config_path) as f:
                 for line in f:
@@ -55,7 +56,8 @@ class TrackSet:
                     if name in self.tracks_name or name[:-4] in self.tracks_name:
                         idx = self.tracks_name.index(name)
                         self.tracks_set[idx][0]['MidiNum'] = int(port) -1 
-                        print(name,int(port))
+                        if verb:
+                            print('\t',name,int(port))
         return
 
 
