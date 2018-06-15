@@ -1,0 +1,5 @@
+test_midi_folder:
+  beat_per_bar: 4
+  bar_per_loop: 4
+  chord_seq: ['E:min','G:min','G#:min','D#']
+  tune_instrument: ['Bass_1.mid','Chord_1.mid','Chord_2.mid','Theme_1.mid','Theme_2.mid']

@@ -23,7 +23,7 @@ attribute:
               this value should be determined by the neighboring group
 ------
 '''
-import FoxDot.lib                                                                                                                                                                
+                                                                                                                                                              
 import mido
 import numpy as np
 
@@ -88,8 +88,9 @@ class group_note:
         '''
         return a dictionary which is compatible to FoxDot
         '''
+        import FoxDot
         P = {'degree': tuple([midinote2degree(n) for n in self.group_note]), 'dur': self.duration if self.duration > 0 else FoxDot.lib.rest(-self.duration),
-             'sus': tuple(self.release_time), 'amp': tuple([(v+1.)/128 for v in self.velocity])}
+             'sus': tuple(self.release_time), 'amp': tuple([(v+1.)/128 for v in self.velocity]),  'start_time': self.start_time}
         return P
 
 
@@ -125,7 +126,7 @@ class loop_note_seq:
         '''
         return a iterable list which contains pattern-like parameters
         '''
-        P_serial = {'degree': [], 'dur': [], 'sus': [], 'amp': []}
+        P_serial = {'degree': [], 'dur': [], 'sus': [], 'amp': [], 'start_time':[]}
         for s_g in [g.group2p() for g in self.serial_groups]:
             for key, value in P_serial.items():
                 P_serial[key].append(s_g[key])
