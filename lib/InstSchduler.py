@@ -11,17 +11,31 @@ import FoxDot
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import yaml
+from mir_eval.chord import encode_many as chord_encode
 from scipy import signal
 
 from loop_event import EventPipeline
-from tool.midi2p import midi2P
+from tool.midi2p import midi2P, midinote2degree
 from tool.midi2tracks import TrackSet
 from tool.drawtool import draw_function
+
+tone_interval = [0, 0.5, 1, 1.5, 2, 3, 3.5, 4, 4.5, 5, 5.5, 6]
+
+
+def degree_add(deg, dist):
+    degree = deg % 7
+    tmp_dist = tone_interval.index(degree) + dist
+    if tmp_dist < 0:
+        return tone_interval[tmp_dist] - 7 + deg // 7 * 7
+    elif tmp_dist > 11:
+        return tone_interval[tmp_dist - 12] + 7 + deg // 7 * 7
+    return tone_interval[tmp_dist] + deg // 7 * 7
 
 
 class InstScheduler():
 
-    def __init__(self, FoxDot_clock=FoxDot.lib.Clock):
+    def __init__(self, FoxDot_clock, source_path):
         self.s = sched.scheduler(time.time, time.sleep)
         self.fclock = FoxDot_clock
         self.Inst_dict = {}
@@ -31,6 +45,7 @@ class InstScheduler():
         self.need_prepare = 0
         self.pipeline = EventPipeline()
         self.pipeline.Processor(self.EventProcessor, self.fclock_now)
+        self.source_path = source_path
 
     def __getitem__(self, Inst_name):
         return self.Inst_dict[Inst_name]
@@ -49,6 +64,11 @@ class InstScheduler():
         for key, value in kwargs.items():
             p[key] = value
         self.parameters[Inst_name] = p
+        self.parameters[Inst_name]['tunable'] = False
+        if 'tune_instrument' in self.meta:
+            if Inst_name in self.meta['tune_instrument']:
+                self.parameters[Inst_name]['tunable'] = True
+
         if Inst_name not in self.player_dict:
             self.player_dict[Inst_name] = FoxDot.lib.Player()
         self.playing_flag[Inst_name] = False
@@ -66,17 +86,66 @@ class InstScheduler():
 
     def AddMidi(self, Inst_name, port_num):
         Patterns = midi2P(file_path, None, verb=0)
-        Patterns[0]['MidiNum'] = port_num
+        Patterns[0]['MidiNum'] = port_num  # may have some bugs?
         self.AddInst(Inst_name, FoxDot.lib.MidiOut, **Patterns[0])
 
-    def AddMidiFolder(self, folder_path):
-        test = TrackSet(folder_path)
+    def AddMidiFolder(self, style_name):
+        self.style_name = style_name
+        folder_path = os.path.join(self.source_path, self.style_name)
+
+        tracks = TrackSet(folder_path)
         wrap_path = os.path.join(folder_path, 'SC_Abelton.txt')
-        test.wrapping(wrap_path)
-        for n, p in zip(test.tracks_name, test.tracks_set):
+        tracks.wrapping(wrap_path)
+        self.loadmeta()
+        for n, p in zip(tracks.tracks_name, tracks.tracks_set):
             self.AddInst(n, FoxDot.lib.MidiOut, **p[0])
 
-    def ChordOverride(self, chord_pattern):
+    def loadmeta(self):
+        f = open(os.path.join(self.source_path, 'meta.yaml'))
+        self.meta = yaml.load(f)[self.style_name]
+        if 'bar_per_loop' in self.meta and 'beat_per_bar' in self.meta:
+            self.set_tempo_pattern(
+                self.meta['beat_per_bar'], self.meta['bar_per_loop'])
+
+    def chord2degree(chord):
+        root, bitmap, _ = chord_encode(chord)
+        true_bitmap = np.roll(bitmap, root)
+        midinote, _ = np.where(true_bitmap)
+        return [midinote2degree(n) for n in midinote]
+
+    def chord_distance(self, chord_patterns):
+        org, _, _ = chord_encode(self.meta['chord_seq'])
+        target, _, _ = chord_encode(chord_patterns)
+        return target - org
+
+    def ChordOverride(self, chord_dist):
+        '''
+        * Not all the instruments can be tuned
+        * We need to find thw bar in the midi objects (by start_time attribute?)
+        '''
+
+        # Check if the input chord_pattern is compatible to the loop rythm
+        if len(chord_pattern) != self.bar_loop:
+            raise(
+                'The input chord is not compatible with the set tempo pattern. Please check it.')
+        # c_degree = self.chord_distance(chord_pattern)
+        start_anchor = np.arange(
+            self.bar_loop + 1).astype(np.float32) * self.beat_bar
+
+
+        for key, value in self.parameters.items():
+            if value['tunable']:
+
+                bar_notes = [[value['degree'][i] for i, t in enumerate(
+                    value['start_time']) if a0 <= t and t < a1] for a0, a1 in zip(start_anchor[:-1], start_anchor[1:])]
+                new_deg = []
+
+                for g_list in  bar_notes:
+                    # return an array of notes represented in degree
+                    new_deg += [tuple([degree_add(n, chord_dist)for n in g])
+                                for g in g_list]
+                self.change_parameters(key, degree=new_deg)
+
         return
 
     def change_parameters(self, Inst_name, **kwargs):
@@ -207,7 +276,11 @@ class InstScheduler():
         self.pipeline.PushEvent(
             ["Loop_End"], [{'is_loop': True}], self.period - 1)
 
-    def CheckingAsyLoop(self, beat_bar=4, bar_loop=4):
+    def set_tempo_pattern(self, beat_bar=4, bar_loop=4):
+        self.beat_bar = beat_bar
+        self.bar_loop = bar_loop
+
+    def CheckingAsyLoop(self):
         '''
         Asynchronous main loop for checking the event online
         '''
@@ -217,7 +290,7 @@ class InstScheduler():
         self.fclock.set_time(-0.1)
 
         self.start_time = time.time()
-        loop_dur = beat_bar * bar_loop * (60. / self.fclock.bpm)
+        loop_dur = self.beat_bar * self.bar_loop * (60. / self.fclock.bpm)
         sleep_time = loop_dur / 2.
         while(cont):
             cont = self.pipeline.sent_request(0)
@@ -254,32 +327,27 @@ class InstScheduler():
 
 if __name__ == '__main__':
 
-    folder_path = 'tool\\test_midi_folder'
-    '''
-    test = InstScheduler(FoxDot.lib.Clock)
-    test.AddMidiFolder(folder_path)
-    test.Ordered_event()
-    test.StartInTime(2, 160)
-    '''
+    source_path = 'tool'
+    style_name = 'test_midi_folder'
 
-    '''
-    test2 = InstScheduler(FoxDot.lib.Clock)
-    test2.AddMidiFolder(folder_path)
-    test2.Random_event(2)
-    test2.StartInTime(2, 160)
-    '''
+    test = InstScheduler(FoxDot.lib.Clock, source_path)
+    test.AddMidiFolder(style_name)
+    test.ChordOverride(['C', 'F', 'G', 'C'])
 
-    # '''
-    test3 = InstScheduler(FoxDot.lib.Clock)
-    test3.AddMidiFolder(folder_path)
-    test3.Live_event()
+    # choose the playing mode
+    # test.Ordered_event()
+    # test.Random_event(2)
+    test.Live_event()
+    # test.set_tempo_pattern(4, 4)
+
+    # testing routine for accuracy start
     c_time = time.time()
     loop_acc_test = threading.Timer(2, lambda: print(time.time() - c_time), ())
     loop_acc_test.daemon = True
     loop_acc_test.start()
-    test3.StartInTime(2, 160)
+    # testing routine for accuracy end
 
-    # '''
+    test.StartInTime(2, 160)
 
     while(1):
         print('outside loop')
