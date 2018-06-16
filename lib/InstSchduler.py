@@ -23,14 +23,27 @@ from tool.drawtool import draw_function
 tone_interval = [0, 0.5, 1, 1.5, 2, 3, 3.5, 4, 4.5, 5, 5.5, 6]
 
 
-def degree_add(deg, dist):
+def degree_add(deg, dist_list):
+    '''
+    minmaj_map
+        0: min -> min or maj->maj
+        1: maj -> min
+        -1: min -> maj
+    '''
+
     degree = deg % 7
-    tmp_dist = tone_interval.index(degree) + dist
+    tone_pos = tone_interval.index(degree)
+    dist = dist_list[tone_pos]
+    tmp_dist = tone_pos + dist
+
     if tmp_dist < 0:
-        return tone_interval[tmp_dist] - 7 + deg // 7 * 7
+        direct_dist = tone_interval[tmp_dist] - 7 + deg // 7 * 7
     elif tmp_dist > 11:
-        return tone_interval[tmp_dist - 12] + 7 + deg // 7 * 7
-    return tone_interval[tmp_dist] + deg // 7 * 7
+        direct_dist = tone_interval[tmp_dist - 12] + 7 + deg // 7 * 7
+    else:
+        direct_dist = tone_interval[tmp_dist] + deg // 7 * 7
+
+    return direct_dist
 
 
 class InstScheduler():
@@ -80,9 +93,9 @@ class InstScheduler():
 
     def fclock_now(self):
         if self.period:
-            return self.fclock.now() / 16 % self.period
+            return self.fclock.now() / (self.beat_bar * self.bar_loop) % self.period
         else:
-            return self.fclock.now() / 16
+            return self.fclock.now() / (self.beat_bar * self.bar_loop)
 
     def AddMidi(self, Inst_name, port_num):
         Patterns = midi2P(file_path, None, verb=0)
@@ -106,6 +119,8 @@ class InstScheduler():
         if 'bar_per_loop' in self.meta and 'beat_per_bar' in self.meta:
             self.set_tempo_pattern(
                 self.meta['beat_per_bar'], self.meta['bar_per_loop'])
+        else:
+            self.set_tempo_pattern()
 
     def chord2degree(chord):
         root, bitmap, _ = chord_encode(chord)
@@ -113,25 +128,74 @@ class InstScheduler():
         midinote, _ = np.where(true_bitmap)
         return [midinote2degree(n) for n in midinote]
 
-    def chord_distance(self, chord_patterns):
-        org, _, _ = chord_encode(self.meta['chord_seq'])
+    def chord_distance(self, chord_patterns, target_anchor):
+        if len(self.meta['chord_seq']) < len(target_anchor):
+            default_anchor = np.arange(
+                self.bar_loop + 1).astype(np.float32) * self.beat_bar
+            org_chord = []
+            for t1, t2 in zip(target_anchor[:-1], target_anchor[1:]):
+                for idx, (o1, o2) in enumerate(zip(default_anchor[:-1], default_anchor[1:])):
+                    if o1 <= t1 and t2 <= o2:
+                        org_chord += [self.meta['chord_seq'][idx]]
+        else:
+            org_chord = self.meta['chord_seq']
+        org, _, _ = chord_encode(org_chord)
         target, _, _ = chord_encode(chord_patterns)
-        return target - org
+        dist_list = []
+        for t, o, org_c, tar_c in zip(target, org, org_chord, chord_patterns):
+            direct_dist = t - o
+            true_dist = [direct_dist] * 12
+            if 'min' in org_c and 'min' not in tar_c:
+                true_dist[3] += 1
+                true_dist[8] += 1
+                true_dist[10] += 1
+                true_dist[11] += 1  # Not sure how to transfer this note
+            elif 'min' in tar_c and 'min' not in org_c:
+                true_dist[4] -= 1
+                true_dist[9] -= 1
+                true_dist[11] -= 1
+            true_dist = np.roll(true_dist, o)
+            dist_list.append(true_dist)
+        return dist_list
 
-    def ChordOverride(self, chord_dist):
+    def ChordOverride(self, chord_pattern, anchor_point=None):
         '''
         * Not all the instruments can be tuned
         * We need to find thw bar in the midi objects (by start_time attribute?)
         '''
 
         # Check if the input chord_pattern is compatible to the loop rythm
-        if len(chord_pattern) != self.bar_loop:
-            raise(
-                'The input chord is not compatible with the set tempo pattern. Please check it.')
-        # c_degree = self.chord_distance(chord_pattern)
-        start_anchor = np.arange(
-            self.bar_loop + 1).astype(np.float32) * self.beat_bar
+        # if len(chord_pattern) != self.bar_loop:
+        #     raise(
+        #         'The input chord is not compatible with the set tempo pattern. Please check it.')
 
+        # anchor point checking
+        if anchor_point is None:
+            start_anchor = np.arange(
+                self.bar_loop + 1).astype(np.float32) * self.beat_bar
+        else:
+            if len(anchor_point) != len(chord_pattern):
+                raise Exception(
+                    'ValueErr: the length of anchor_point and chord_pattern should be the same')
+            if min(anchor_point) < 0 or max(anchor_point) > self.bar_loop * self.beat_bar:
+                raise Exception(
+                    'ValueErr: the value of anchor time should be valid with the set_tempo_pattern')
+            start_anchor = anchor_point
+            if start_anchor[-1] != self.bar_loop * self.beat_bar:
+                start_anchor.append(self.bar_loop * self.beat_bar)
+
+        # input chord_pattern checking
+        if not isinstance(chord_pattern, list):
+            if isinstance(chord_pattern, (int, float)):
+                c_degree = [[chord_pattern] * 12] * self.bar_loop
+            else:
+                raise Exception(
+                    'TypeErr: chord_pattern should be scalar or list of strings')
+        elif not any([isinstance(c, str) for c in chord_pattern]):
+            raise Exception(
+                'TypeErr: chord_pattern should be scalar or list of strings')
+        else:
+            c_degree = self.chord_distance(chord_pattern, start_anchor)
 
         for key, value in self.parameters.items():
             if value['tunable']:
@@ -140,9 +204,9 @@ class InstScheduler():
                     value['start_time']) if a0 <= t and t < a1] for a0, a1 in zip(start_anchor[:-1], start_anchor[1:])]
                 new_deg = []
 
-                for g_list in  bar_notes:
+                for g_list, d in zip(bar_notes, c_degree):
                     # return an array of notes represented in degree
-                    new_deg += [tuple([degree_add(n, chord_dist)for n in g])
+                    new_deg += [tuple([degree_add(n, d)for n in g])
                                 for g in g_list]
                 self.change_parameters(key, degree=new_deg)
 
@@ -185,6 +249,8 @@ class InstScheduler():
             elif e == 'Loop_End':
                 print('Loop_end')
                 self.pipeline.sent_request()
+            elif e == 'Change_Chord':
+                self.ChordOverride(**arg)
             else:
                 print('Event type Wrong!')
 
@@ -273,6 +339,8 @@ class InstScheduler():
                 self.pipeline.PushEvent(
                     ["Gen_Live"], [{'prev_pros': prev_pros, 'pros': p, 'event_time': b}], b - 1)
             prev_pros = p
+        # self.pipeline.InsertEvent(
+        #             ["Change_Chord"], [{'chord_dist': 4}], 4)
         self.pipeline.PushEvent(
             ["Loop_End"], [{'is_loop': True}], self.period - 1)
 
@@ -332,22 +400,23 @@ if __name__ == '__main__':
 
     test = InstScheduler(FoxDot.lib.Clock, source_path)
     test.AddMidiFolder(style_name)
-    test.ChordOverride(['C', 'F', 'G', 'C'])
+    test.ChordOverride(['C', 'G', 'D', 'A', 'E'],[0,4,8,12,14])
+    # test.ChordOverride(3)
 
     # choose the playing mode
-    # test.Ordered_event()
-    # test.Random_event(2)
-    test.Live_event()
-    # test.set_tempo_pattern(4, 4)
+    # test.Ordered_event()      # Play the instruments by the reading order
+    # test.Random_event(2)      # Play the instrumnets by the random order
+    test.Live_event()           # Online random playing event determined by prosperity function
+    test.set_tempo_pattern(4, 4)
 
-    # testing routine for accuracy start
+    # testing routine for accuracy start (Not essential)
     c_time = time.time()
     loop_acc_test = threading.Timer(2, lambda: print(time.time() - c_time), ())
     loop_acc_test.daemon = True
     loop_acc_test.start()
     # testing routine for accuracy end
 
-    test.StartInTime(2, 160)
+    test.StartInTime(2, 80)
 
     while(1):
         print('outside loop')
