@@ -58,8 +58,9 @@ class group_note:
 
     def addnote(self, note):
         self.group_note.append(note.note)
-        self.release_time.append(note.release_time)
+        
         self.duration = np.maximum(self.duration, note.duration) if note.duration > 0 else note.duration
+        self.release_time.append(np.minimum(self.duration - 1/16,np.array(note.release_time))) # prevent loss midi signal
         self.velocity.append(note.velocity)
 
     def __str__(self):
