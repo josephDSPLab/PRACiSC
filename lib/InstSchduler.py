@@ -382,11 +382,13 @@ class InstScheduler():
             cont = self.pipeline.sent_request(0)
             while(cont):
                 cont = self.pipeline.sent_request(0)
-        #self.start_time = time.time()
-        self.fclock.set_time(-0.1)
+        self.fclock.set_time(-0.5)
         self.play_bpm = self.fclock.bpm = play_bpm
+        beat_set_time = abs(self.fclock.now())
+        time.sleep(beat_set_time)
+        print()
         loop_thread = threading.Timer(
-            delay_time - 60. / play_bpm * 1, self.CheckingAsyLoop, ())
+            delay_time - beat_set_time, self.CheckingAsyLoop, ())
         loop_thread.daemon = True
         loop_thread.start()
 
@@ -416,7 +418,7 @@ if __name__ == '__main__':
     loop_acc_test.start()
     # testing routine for accuracy end
 
-    test.StartInTime(2, 80)
+    test.StartInTime(2, 89)
 
     while(1):
         print('outside loop')
