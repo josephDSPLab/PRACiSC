@@ -13,5 +13,5 @@ There is the list for the midi tool and drawing GUI
 * tkinter
 
 ## Usage by import 
-Please refer to `demo_example.py`. Some features are described by the comments in this file.
+Please refer to `lib/demo_example.py`. Some features are described by the comments in this file.
 
