@@ -11,3 +11,7 @@ Play Real-time Automatic Composition in SuperCollider
 There is the list for the midi tool and drawing GUI
 * mido
 * tkinter
+
+## Usage by import 
+Please refer to `demo_example.py`. Some features are described by the comments in this file.
+
