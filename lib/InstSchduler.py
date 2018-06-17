@@ -386,7 +386,6 @@ class InstScheduler():
         self.play_bpm = self.fclock.bpm = play_bpm
         beat_set_time = abs(self.fclock.now())
         time.sleep(beat_set_time)
-        print()
         loop_thread = threading.Timer(
             delay_time - beat_set_time, self.CheckingAsyLoop, ())
         loop_thread.daemon = True
